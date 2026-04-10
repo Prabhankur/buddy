@@ -1,10 +1,12 @@
 # app.py
 import streamlit as st
 from datetime import datetime
-from profile_manager import add_person, get_person, load_profiles
+# from profile_manager import add_person, get_person, load_profiles
 from prompt_engine import generate_message
-from memory_manager import get_memory_summary, clear_memory, save_chat
+# from memory_manager import get_memory_summary, clear_memory, save_chat
 
+# NEW
+from database import add_person, get_person, load_profiles, get_memory_summary, clear_memory, save_chat
 # ── Special Day Checker ────────────────────────────────────
 def check_special_days(profiles):
     today = datetime.now().strftime("%d %B").lstrip("0")  # e.g. "15 August"

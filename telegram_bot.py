@@ -6,9 +6,14 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     ContextTypes, ConversationHandler, filters, CallbackQueryHandler
 )
-from profile_manager import load_profiles, get_person, add_person, delete_person, update_person
+# from memory_manager import get_memory_summary, save_chat , detect_phase
+# from profile_manager import load_profiles, get_person, add_person, delete_person, update_person
+
+# NEW
+from database import load_profiles, get_person, add_person, delete_person, update_person, get_memory_summary, save_chat, clear_memory
+from memory_manager import detect_phase
+
 from prompt_engine import generate_message
-from memory_manager import get_memory_summary, save_chat , detect_phase
 from datetime import datetime
 
 load_dotenv()

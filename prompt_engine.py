@@ -2,8 +2,13 @@
 from dotenv import load_dotenv
 import os
 from groq import Groq
-from profile_manager import get_person
-from memory_manager import get_memory_summary, save_chat, detect_phase
+#old
+# from profile_manager import get_person
+# from memory_manager import get_memory_summary, save_chat, detect_phase
+
+# NEW
+from database import get_person, get_memory_summary, save_chat
+from memory_manager import detect_phase  # keep only detect_phase here
 
 load_dotenv()
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
