@@ -57,24 +57,19 @@ Option 3 (Expressive):
 - <tip 2>
 """
 
-def generate_message(name, user_input, extra_context="",
+def generate_message(user_id, name, user_input, extra_context="",
                      chosen_option=None, they_said="",
                      you_tone="", they_tone=""):
-    person = get_person(name)
+    person = get_person(user_id, name)
     if not person:
         return
 
-    # detect phase automatically
     phase = detect_phase(user_input)
-
-    # pull prioritized memory
-    memory_context = get_memory_summary(name, last_n=5)
+    memory_context = get_memory_summary(user_id, name, last_n=5)
 
     full_input = user_input
     if extra_context:
         full_input += f"\n\nExtra context: {extra_context}"
-
-    print(f"\n⚙️ Generating [{phase}] message for {name}...\n")
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -85,10 +80,9 @@ def generate_message(name, user_input, extra_context="",
     )
 
     result = response.choices[0].message.content
-    print(result)
 
-    # save with full detail
     save_chat(
+        user_id=user_id,
         name=name,
         user_input=user_input,
         generated_options=result,

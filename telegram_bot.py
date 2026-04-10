@@ -1,4 +1,4 @@
-# telegram_bot.py - IMPROVED VERSION
+# telegram_bot.py - FULLY FIXED
 from dotenv import load_dotenv
 import os
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
@@ -6,56 +6,25 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     ContextTypes, ConversationHandler, filters, CallbackQueryHandler
 )
-# from memory_manager import get_memory_summary, save_chat , detect_phase
-# from profile_manager import load_profiles, get_person, add_person, delete_person, update_person
-
-# NEW
-from database import load_profiles, get_person, add_person, delete_person, update_person, get_memory_summary, save_chat, clear_memory
+from database import (load_profiles, get_person, add_person, delete_person,
+                      update_person, get_memory_summary, save_chat, clear_memory)
 from memory_manager import detect_phase
-
 from prompt_engine import generate_message
 from datetime import datetime
 
 load_dotenv()
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
 # ── States ─────────────────────────────────────────────────
 (SELECT_PERSON, GET_MESSAGE, GET_CONTEXT, SAVE_REPLY,
  NEW_NAME, NEW_RELATION, NEW_AGE, NEW_GENDER,
  NEW_LANGUAGE, NEW_TONE, NEW_HABITS, NEW_DAYS,
- DELETE_CONFIRM, UPDATE_SELECT, UPDATE_FIELD, UPDATE_VALUE ,  WHAT_NEXT) = range(17)
+ DELETE_CONFIRM, UPDATE_SELECT, UPDATE_FIELD, UPDATE_VALUE,
+ WHAT_NEXT) = range(17)
 
-
-async def what_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    choice = update.message.text
-
-    if choice == "💬 Send another message":
-        name = context.user_data["selected_person"]
-        await update.message.reply_text(
-            f"What do you want to say to {name} now?\n"
-            f"_(type in any language, any tone)_",
-            parse_mode="Markdown"
-        )
-        return GET_MESSAGE  # ← goes back to message input!
-
-    elif choice == "👤 Change person":
-        profiles = load_profiles()
-        people = list(profiles.keys())
-        keyboard = [[p] for p in people]
-        await update.message.reply_text(
-            "Who do you want to chat with?",
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-        )
-        return SELECT_PERSON
-
-    else:  # End session
-        await update.message.reply_text(
-            "👋 Session ended. Send /start anytime!"
-        )
-        return ConversationHandler.END
-    
 # ── Special day checker ────────────────────────────────────
-def check_special_days():
-    profiles = load_profiles()
+def check_special_days(user_id):
+    profiles = load_profiles(user_id)
     today = datetime.now().strftime("%d %B").lstrip("0")
     day_part, month_part = today.split()[0], today.split()[1]
     alerts = []
@@ -65,7 +34,7 @@ def check_special_days():
             alerts.append((name, special))
     return alerts
 
-# ── Parse and send options as separate messages ────────────
+# ── Send options as separate messages ──────────────────────
 async def send_options(update, result, name):
     lines = result.strip().split("\n")
     current_block = []
@@ -90,29 +59,20 @@ async def send_options(update, result, name):
         if not block:
             continue
         if block.startswith("Option"):
-            # remove "Option 1 (Short):" line, keep only message
             lines_in_block = block.split("\n")
-            # skip first line (Option 1...), send only the message
             message_only = "\n".join(lines_in_block[1:]).strip()
             if message_only:
-                await update.message.reply_text(
-                    f"{emojis[count]} {message_only}"
-                )
+                await update.message.reply_text(f"{emojis[count]} {message_only}")
                 count += 1
         elif block.startswith("💡"):
             await update.message.reply_text(block)
 
-    # buttons
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Regenerate", callback_data="regenerate")],
         [InlineKeyboardButton("💾 Save & record reply", callback_data="save")]
     ])
-    await update.message.reply_text(
-        "Copy the message you like 👆 then:",
-        reply_markup=keyboard
-    )
+    await update.message.reply_text("Copy the message you like 👆 then:", reply_markup=keyboard)
 
-# ── /help ──────────────────────────────────────────────────
 # ── /help ──────────────────────────────────────────────────
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -126,7 +86,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help → Show this menu\n\n"
         "💡 *How it works:*\n"
         "1. Select who you want to message\n"
-        "2. Tell the bot what you want to say (any language/tone)\n"
+        "2. Tell the bot what you want to say\n"
         "3. Get 3 polished message options\n"
         "4. Copy the one you like to the real chat\n"
         "5. Paste their reply back to save memory",
@@ -135,14 +95,15 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /start ─────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    profiles = load_profiles()
+    user_id = update.effective_user.id
+    context.user_data["user_id"] = user_id
+    profiles = load_profiles(user_id)
     people = list(profiles.keys())
 
-    alerts = check_special_days()
+    alerts = check_special_days(user_id)
     for name, event in alerts:
         await update.message.reply_text(
-            f"🎉 Today is special for *{name}* → {event}\n"
-            f"Send /start and select {name} to generate a wish!",
+            f"🎉 Today is special for *{name}* → {event}",
             parse_mode="Markdown"
         )
 
@@ -156,7 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [[p] for p in people]
     await update.message.reply_text(
-        "👋 *Welcome to Chat Assistant!*\n\nWho do you want to message?",
+        "👋 *Welcome!*\n\nWho do you want to message?",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
         parse_mode="Markdown"
     )
@@ -164,8 +125,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Person selected ────────────────────────────────────────
 async def person_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.user_data["user_id"]
     name = update.message.text
-    person = get_person(name)
+    person = get_person(user_id, name)
+
     if not person:
         await update.message.reply_text("❌ Profile not found. Try /start again.")
         return ConversationHandler.END
@@ -175,7 +138,7 @@ async def person_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ *{name}* selected\n"
         f"Relation: {person['relation']} | Language: {person['language']} | Tone: {person['default_tone']}\n\n"
         f"What do you want to say to {name}?\n"
-        f"_(Type in any language, any tone — be as raw as you want)_",
+        f"_(any language, any tone)_",
         parse_mode="Markdown"
     )
     return GET_MESSAGE
@@ -185,9 +148,8 @@ async def get_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["user_input"] = update.message.text
     keyboard = ReplyKeyboardMarkup([["skip"]], one_time_keyboard=True)
     await update.message.reply_text(
-        "📎 Any extra context to help the AI?\n"
-        "_(e.g. 'we had a fight', 'he was excited about this', 'its urgent')_\n\n"
-        "Or tap *skip*",
+        "📎 Any extra context?\n"
+        "_(e.g. 'we had a fight', 'its urgent')_\n\nOr tap *skip*",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -196,6 +158,7 @@ async def get_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Generate ───────────────────────────────────────────────
 async def get_context_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     extra = "" if update.message.text.lower() == "skip" else update.message.text
+    user_id = context.user_data["user_id"]
     name = context.user_data["selected_person"]
     user_input = context.user_data["user_input"]
 
@@ -204,9 +167,13 @@ async def get_context_and_generate(update: Update, context: ContextTypes.DEFAULT
 
     await update.message.reply_text("⚙️ Generating message options...")
 
-    result = generate_message(name=name, user_input=user_input, extra_context=extra)
+    result = generate_message(
+        user_id=user_id,
+        name=name,
+        user_input=user_input,
+        extra_context=extra
+    )
     context.user_data["last_result"] = result
-
     await send_options(update, result, name)
     return SAVE_REPLY
 
@@ -216,14 +183,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "regenerate":
+        user_id = context.user_data.get("user_id")
         name = context.user_data.get("selected_person")
         user_input = context.user_data.get("last_input")
         extra = context.user_data.get("extra", "")
 
-        await query.message.reply_text("🔄 Regenerating with improved options...")
+        await query.message.reply_text("🔄 Regenerating...")
         result = generate_message(
+            user_id=user_id,
             name=name,
-            user_input=user_input + " (give different/better options than before)",
+            user_input=user_input + " (give different options than before)",
             extra_context=extra
         )
         context.user_data["last_result"] = result
@@ -231,18 +200,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "save":
         await query.message.reply_text(
-            "📥 Paste their reply here so I can save it to memory.\n"
-            "_(Or type 'skip' to just end the session)_"
+            "📥 Paste their reply here.\n_(Or type 'skip')_",
+            parse_mode="Markdown"
         )
 
 # ── Save reply ─────────────────────────────────────────────
 async def save_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     their_reply = update.message.text
+    user_id = context.user_data["user_id"]
     name = context.user_data["selected_person"]
     user_input = context.user_data["last_input"]
     last_result = context.user_data["last_result"]
 
     save_chat(
+        user_id=user_id,
         name=name,
         user_input=user_input,
         generated_options=last_result,
@@ -251,7 +222,6 @@ async def save_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phase=detect_phase(user_input)
     )
 
-    # ── Don't end! Ask what to do next ────────────────────
     keyboard = ReplyKeyboardMarkup([
         ["💬 Send another message"],
         ["👤 Change person"],
@@ -259,20 +229,49 @@ async def save_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ], one_time_keyboard=True)
 
     await update.message.reply_text(
-        f"💾 Saved!\n\nWhat do you want to do next?",
+        "💾 Saved!\n\nWhat do you want to do next?",
         reply_markup=keyboard
     )
-    return WHAT_NEXT  # new state
+    return WHAT_NEXT
+
+# ── What next ──────────────────────────────────────────────
+async def what_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    choice = update.message.text
+    user_id = context.user_data["user_id"]
+
+    if choice == "💬 Send another message":
+        name = context.user_data["selected_person"]
+        await update.message.reply_text(
+            f"What do you want to say to {name} now?",
+        )
+        return GET_MESSAGE
+
+    elif choice == "👤 Change person":
+        profiles = load_profiles(user_id)
+        people = list(profiles.keys())
+        keyboard = [[p] for p in people]
+        await update.message.reply_text(
+            "Who do you want to chat with?",
+            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+        )
+        return SELECT_PERSON
+
+    else:
+        await update.message.reply_text("👋 Session ended. Send /start anytime!")
+        return ConversationHandler.END
 
 # ── /new person flow ───────────────────────────────────────
 async def new_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    context.user_data["user_id"] = user_id
     await update.message.reply_text("➕ *Adding new person*\n\nWhat is their name?", parse_mode="Markdown")
     return NEW_NAME
 
 async def new_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_name"] = update.message.text
     keyboard = ReplyKeyboardMarkup(
-        [["friend", "close friend"], ["boss", "parent"], ["sibling", "crush"], ["client", "colleague"]],
+        [["friend", "close friend"], ["boss", "parent"],
+         ["sibling", "crush"], ["client", "colleague"]],
         one_time_keyboard=True
     )
     await update.message.reply_text("What is your relation?", reply_markup=keyboard)
@@ -307,7 +306,7 @@ async def new_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def new_tone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_tone"] = update.message.text
     await update.message.reply_text(
-        "Any special habits or personality traits?\n_(e.g. 'loves jokes, hates formal talk')_\n\nOr type 'skip'",
+        "Any special habits?\n_(or type 'skip')_",
         parse_mode="Markdown"
     )
     return NEW_HABITS
@@ -315,7 +314,7 @@ async def new_tone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def new_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_habits"] = "" if update.message.text.lower() == "skip" else update.message.text
     await update.message.reply_text(
-        "Any special days?\n_(e.g. 'Birthday: 15 August')_\n\nOr type 'skip'",
+        "Any special days?\n_(e.g. 'Birthday: 15 August' or 'skip')_",
         parse_mode="Markdown"
     )
     return NEW_DAYS
@@ -323,8 +322,9 @@ async def new_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def new_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
     special_days = "" if update.message.text.lower() == "skip" else update.message.text
     d = context.user_data
+    user_id = d["user_id"]
     add_person(
-        d["new_name"], d["new_relation"], int(d["new_age"]),
+        user_id, d["new_name"], d["new_relation"], int(d["new_age"]),
         d["new_gender"], d["new_language"], d["new_tone"],
         d["new_habits"], special_days
     )
@@ -336,7 +336,9 @@ async def new_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /delete flow ───────────────────────────────────────────
 async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    profiles = load_profiles()
+    user_id = update.effective_user.id
+    context.user_data["user_id"] = user_id
+    profiles = load_profiles(user_id)
     people = list(profiles.keys())
     if not people:
         await update.message.reply_text("No profiles found.")
@@ -344,7 +346,7 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [[p] for p in people]
     await update.message.reply_text(
-        "🗑️ *Which person do you want to delete?*",
+        "🗑️ *Which person to delete?*",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
         parse_mode="Markdown"
     )
@@ -353,27 +355,29 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text
     context.user_data["delete_name"] = name
-
     keyboard = ReplyKeyboardMarkup([["✅ Yes, delete", "❌ Cancel"]], one_time_keyboard=True)
     await update.message.reply_text(
-        f"Are you sure you want to delete *{name}*?\nThis will remove their profile AND all memory.",
+        f"Sure you want to delete *{name}*?",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
-    return DELETE_CONFIRM + 1  
+    return DELETE_CONFIRM + 1
 
 async def delete_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.user_data["user_id"]
     if "Yes" in update.message.text:
         name = context.user_data["delete_name"]
-        delete_person(name)
-        await update.message.reply_text(f"🗑️ *{name}* has been deleted.", parse_mode="Markdown")
+        delete_person(user_id, name)
+        await update.message.reply_text(f"🗑️ *{name}* deleted.", parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ Deletion cancelled.")
+        await update.message.reply_text("❌ Cancelled.")
     return ConversationHandler.END
 
 # ── /update flow ───────────────────────────────────────────
 async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    profiles = load_profiles()
+    user_id = update.effective_user.id
+    context.user_data["user_id"] = user_id
+    profiles = load_profiles(user_id)
     people = list(profiles.keys())
     if not people:
         await update.message.reply_text("No profiles found.")
@@ -381,22 +385,22 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [[p] for p in people]
     await update.message.reply_text(
-        "✏️ *Which person do you want to update?*",
+        "✏️ *Which person to update?*",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
         parse_mode="Markdown"
     )
     return UPDATE_SELECT
 
 async def update_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.user_data["user_id"]
     name = update.message.text
-    person = get_person(name)
+    person = get_person(user_id, name)
+
     if not person:
         await update.message.reply_text("❌ Profile not found.")
         return ConversationHandler.END
 
     context.user_data["update_name"] = name
-
-    # show current details
     await update.message.reply_text(
         f"📋 *Current details for {name}:*\n"
         f"• Relation: {person['relation']}\n"
@@ -408,26 +412,19 @@ async def update_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Special Days: {person['special_days']}",
         parse_mode="Markdown"
     )
-
     keyboard = ReplyKeyboardMarkup([
         ["relation", "age"],
         ["gender", "language"],
         ["default_tone", "special_habits"],
         ["special_days"]
     ], one_time_keyboard=True)
-
-    await update.message.reply_text(
-        "Which field do you want to update?",
-        reply_markup=keyboard
-    )
+    await update.message.reply_text("Which field to update?", reply_markup=keyboard)
     return UPDATE_FIELD
 
 async def update_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["update_field"] = update.message.text
     field = update.message.text
-    name = context.user_data["update_name"]
 
-    # show options for certain fields
     if field == "language":
         keyboard = ReplyKeyboardMarkup([["Hindi", "English", "Hinglish"]], one_time_keyboard=True)
         await update.message.reply_text("Choose new language:", reply_markup=keyboard)
@@ -445,30 +442,29 @@ async def update_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Choose relation:", reply_markup=keyboard)
     else:
         await update.message.reply_text(f"Enter new value for *{field}*:", parse_mode="Markdown")
-
     return UPDATE_VALUE
 
 async def update_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name  = context.user_data["update_name"]
+    user_id = context.user_data["user_id"]
+    name = context.user_data["update_name"]
     field = context.user_data["update_field"]
     value = update.message.text
-
-    update_person(name, field, value)
+    update_person(user_id, name, field, value)
     await update.message.reply_text(
-        f"✅ *{name}'s* {field} updated to: *{value}*\n\nSend /start to continue.",
+        f"✅ *{name}'s* {field} updated!\n\nSend /start to continue.",
         parse_mode="Markdown"
     )
     return ConversationHandler.END
 
-
 # ── /memory ────────────────────────────────────────────────
 async def memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    profiles = load_profiles()
+    user_id = update.effective_user.id
+    profiles = load_profiles(user_id)
     if not profiles:
         await update.message.reply_text("No profiles found.")
         return
     for name in profiles:
-        summary = get_memory_summary(name, last_n=3)
+        summary = get_memory_summary(user_id, name, last_n=3)
         await update.message.reply_text(f"🧠 *{name}:*\n{summary}", parse_mode="Markdown")
 
 # ── /cancel ────────────────────────────────────────────────
@@ -481,16 +477,16 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     chat_conv = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
-    states={
-        SELECT_PERSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, person_selected)],
-        GET_MESSAGE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
-        GET_CONTEXT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_context_and_generate)],
-        SAVE_REPLY:    [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reply)],
-        WHAT_NEXT:     [MessageHandler(filters.TEXT & ~filters.COMMAND, what_next)],  # ← new
-    },
-    fallbacks=[CommandHandler("cancel", cancel)]
-)
+        entry_points=[CommandHandler("start", start)],
+        states={
+            SELECT_PERSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, person_selected)],
+            GET_MESSAGE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
+            GET_CONTEXT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_context_and_generate)],
+            SAVE_REPLY:    [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reply)],
+            WHAT_NEXT:     [MessageHandler(filters.TEXT & ~filters.COMMAND, what_next)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
 
     new_conv = ConversationHandler(
         entry_points=[CommandHandler("new", new_person)],
@@ -524,16 +520,15 @@ def main():
             UPDATE_VALUE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, update_value)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
-)
+    )
 
     app.add_handler(chat_conv)
     app.add_handler(new_conv)
+    app.add_handler(delete_conv)
+    app.add_handler(update_conv)
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("memory", memory))
     app.add_handler(CommandHandler("help", help_cmd))
-
-    app.add_handler(delete_conv)
-    app.add_handler(update_conv)
 
     print("🤖 Bot is running...")
     app.run_polling()

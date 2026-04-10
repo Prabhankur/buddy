@@ -1,10 +1,62 @@
 # app.py
 import streamlit as st
+from database import register_user, login_user
+
+def auth_page():
+    if "user_id" in st.session_state:
+        return True  # already logged in
+
+    st.title("💬 Chat Assistant")
+    tab1, tab2 = st.tabs(["Login", "Register"])
+
+    with tab1:
+        st.subheader("🔑 Login")
+        username = st.text_input("Username", key="login_user")
+        password = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Login"):
+            if username and password:
+                success, result = login_user(username, password)
+                if success:
+                    st.session_state["user_id"] = result
+                    st.session_state["username"] = username
+                    st.rerun()
+                else:
+                    st.error(result)
+            else:
+                st.warning("Please fill all fields!")
+
+    with tab2:
+        st.subheader("📝 Register")
+        new_username = st.text_input("Choose Username", key="reg_user")
+        new_password = st.text_input("Choose Password", type="password", key="reg_pass")
+        confirm_pass = st.text_input("Confirm Password", type="password", key="reg_confirm")
+        if st.button("Register"):
+            if new_username and new_password and confirm_pass:
+                if new_password != confirm_pass:
+                    st.error("Passwords don't match!")
+                else:
+                    success, msg = register_user(new_username, new_password)
+                    if success:
+                        st.success(f"✅ Account created! Please login.")
+                    else:
+                        st.error(msg)
+            else:
+                st.warning("Please fill all fields!")
+    return False
+
+# ── Run auth check ─────────────────────────────────────────
+if not auth_page():
+    st.stop()
+
+# ── Rest of app uses st.session_state["user_id"] ──────────
+user_id = st.session_state["user_id"]
+
 from datetime import datetime
 # from profile_manager import add_person, get_person, load_profiles
 from prompt_engine import generate_message
 # from memory_manager import get_memory_summary, clear_memory, save_chat
 
+    
 # NEW
 from database import add_person, get_person, load_profiles, get_memory_summary, clear_memory, save_chat
 # ── Special Day Checker ────────────────────────────────────
@@ -27,7 +79,7 @@ st.title("💬 Chat Assistant")
 st.caption("Say the right thing, every time.")
 
 # ── Special Day Banner ─────────────────────────────────────
-profiles = load_profiles()
+profiles = load_profiles(user_id)
 alerts = check_special_days(profiles)
 if alerts:
     for name, event in alerts:
@@ -36,6 +88,7 @@ if alerts:
         if st.button(f"✨ Generate wish for {name}"):
             with st.spinner("Generating wish..."):
                 result = generate_message(
+                    user_id=user_id,
                     name=name,
                     user_input=f"Today is their special day: {event}. Generate a warm wish.",
                     extra_context="This is an automatic special day wish."
@@ -103,7 +156,7 @@ with st.sidebar.expander("🗑️ Delete Person"):
         
 # ── Main: Chat section ─────────────────────────────────────
 if selected_person:
-    person = get_person(selected_person)
+    person = get_person(user_id ,selected_person)
     st.subheader(f"Chatting context → {selected_person}")
 
     col1, col2 = st.columns(2)
@@ -125,6 +178,7 @@ if selected_person:
         if user_input.strip():
             with st.spinner("Thinking..."):
                 result = generate_message(
+                    user_id=user_id,
                     name=selected_person,
                     user_input=user_input,
                     extra_context=extra_context
@@ -151,6 +205,7 @@ chosen_option = st.text_input("Which option did you send?", placeholder="e.g. Op
 
 if st.button("💾 Save this exchange to memory"):
     save_chat(
+        user_id=user_id,
         name=selected_person,
         user_input=st.session_state["last_input"],
         generated_options=st.session_state["last_result"],
@@ -165,8 +220,16 @@ if st.button("💾 Save this exchange to memory"):
 
     # ── Memory viewer ──────────────────────────────────────
     with st.expander("🧠 View Memory (past chats)"):
-        memory = get_memory_summary(selected_person, last_n=10)
+        memory = get_memory_summary(user_id , selected_person, last_n=10)
         st.text(memory)
         if st.button("🗑️ Clear Memory"):
-            clear_memory(selected_person)
+            clear_memory(user_id , selected_person)
             st.success("Memory cleared!")
+
+# add this in sidebar
+if st.sidebar.button("🚪 Logout"):
+    del st.session_state["user_id"]
+    del st.session_state["username"]
+    st.rerun()
+
+st.sidebar.caption(f"Logged in as: {st.session_state['username']}")
