@@ -22,8 +22,37 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 (SELECT_PERSON, GET_MESSAGE, GET_CONTEXT, SAVE_REPLY,
  NEW_NAME, NEW_RELATION, NEW_AGE, NEW_GENDER,
  NEW_LANGUAGE, NEW_TONE, NEW_HABITS, NEW_DAYS,
- DELETE_CONFIRM, UPDATE_SELECT, UPDATE_FIELD, UPDATE_VALUE) = range(16)
+ DELETE_CONFIRM, UPDATE_SELECT, UPDATE_FIELD, UPDATE_VALUE ,  WHAT_NEXT) = range(17)
 
+
+async def what_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    choice = update.message.text
+
+    if choice == "💬 Send another message":
+        name = context.user_data["selected_person"]
+        await update.message.reply_text(
+            f"What do you want to say to {name} now?\n"
+            f"_(type in any language, any tone)_",
+            parse_mode="Markdown"
+        )
+        return GET_MESSAGE  # ← goes back to message input!
+
+    elif choice == "👤 Change person":
+        profiles = load_profiles()
+        people = list(profiles.keys())
+        keyboard = [[p] for p in people]
+        await update.message.reply_text(
+            "Who do you want to chat with?",
+            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+        )
+        return SELECT_PERSON
+
+    else:  # End session
+        await update.message.reply_text(
+            "👋 Session ended. Send /start anytime!"
+        )
+        return ConversationHandler.END
+    
 # ── Special day checker ────────────────────────────────────
 def check_special_days():
     profiles = load_profiles()
@@ -54,17 +83,32 @@ async def send_options(update, result, name):
     if current_block:
         blocks.append("\n".join(current_block))
 
+    emojis = ["1️⃣", "2️⃣", "3️⃣"]
+    count = 0
     for block in blocks:
-        if block.strip():
-            await update.message.reply_text(block.strip())
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith("Option"):
+            # remove "Option 1 (Short):" line, keep only message
+            lines_in_block = block.split("\n")
+            # skip first line (Option 1...), send only the message
+            message_only = "\n".join(lines_in_block[1:]).strip()
+            if message_only:
+                await update.message.reply_text(
+                    f"{emojis[count]} {message_only}"
+                )
+                count += 1
+        elif block.startswith("💡"):
+            await update.message.reply_text(block)
 
-    # Regenerate + Save buttons
+    # buttons
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Regenerate", callback_data="regenerate")],
-        [InlineKeyboardButton("💾 Save & record their reply", callback_data="save")]
+        [InlineKeyboardButton("💾 Save & record reply", callback_data="save")]
     ])
     await update.message.reply_text(
-        "Choose an option above 👆 or:",
+        "Copy the message you like 👆 then:",
         reply_markup=keyboard
     )
 
@@ -198,7 +242,6 @@ async def save_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = context.user_data["last_input"]
     last_result = context.user_data["last_result"]
 
-    # save YOU and THEM separately now
     save_chat(
         name=name,
         user_input=user_input,
@@ -208,13 +251,18 @@ async def save_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phase=detect_phase(user_input)
     )
 
+    # ── Don't end! Ask what to do next ────────────────────
+    keyboard = ReplyKeyboardMarkup([
+        ["💬 Send another message"],
+        ["👤 Change person"],
+        ["🏠 End session"]
+    ], one_time_keyboard=True)
+
     await update.message.reply_text(
-        "💾 Saved to memory!\n\n"
-        "Send /start to message someone again\n"
-        "Send /new to add a new person\n"
-        "Send /memory to view past chats"
+        f"💾 Saved!\n\nWhat do you want to do next?",
+        reply_markup=keyboard
     )
-    return ConversationHandler.END
+    return WHAT_NEXT  # new state
 
 # ── /new person flow ───────────────────────────────────────
 async def new_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -433,15 +481,16 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     chat_conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            SELECT_PERSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, person_selected)],
-            GET_MESSAGE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
-            GET_CONTEXT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_context_and_generate)],
-            SAVE_REPLY:    [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reply)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
+    entry_points=[CommandHandler("start", start)],
+    states={
+        SELECT_PERSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, person_selected)],
+        GET_MESSAGE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_message)],
+        GET_CONTEXT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, get_context_and_generate)],
+        SAVE_REPLY:    [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reply)],
+        WHAT_NEXT:     [MessageHandler(filters.TEXT & ~filters.COMMAND, what_next)],  # ← new
+    },
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
 
     new_conv = ConversationHandler(
         entry_points=[CommandHandler("new", new_person)],
