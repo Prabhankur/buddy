@@ -1,0 +1,4 @@
+groq
+python-telegram-bot
+python-dotenv
+streamlit
