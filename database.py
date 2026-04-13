@@ -1,23 +1,21 @@
+# database.py
+from dotenv import load_dotenv
 import os
 import hashlib
-from datetime import datetime
-from dotenv import load_dotenv
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 
-# Load environment variables
 load_dotenv()
 
-# ── Database Initialization ────────────────────────────────
+# ── Connect to MongoDB FIRST ───────────────────────────────
 client = MongoClient(os.environ.get("MONGO_URI"), server_api=ServerApi('1'))
 db = client["buddy_db"]
-
-# Define collections AFTER db is initialized
-users_collection = db["users"]
 profiles_collection = db["profiles"]
+users_collection = db["users"]  # ✅ now db exists
+# ── Special Day Todo functions ─────────────────────────────
+todos_collection = db["todos"]
 
 # ── User account functions ─────────────────────────────────
-
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -25,7 +23,6 @@ def register_user(username, password):
     existing = users_collection.find_one({"username": username})
     if existing:
         return False, "Username already exists!"
-    
     users_collection.insert_one({
         "username": username,
         "password": hash_password(password),
@@ -38,7 +35,7 @@ def login_user(username, password):
         "password": hash_password(password)
     })
     if user:
-        return True, str(user["_id"])  # returns their unique user_id
+        return True, str(user["_id"])
     return False, "Wrong username or password!"
 
 
@@ -47,10 +44,10 @@ def login_user(username, password):
 def load_profiles(user_id):
     profiles = {}
     for doc in profiles_collection.find({"user_id": str(user_id)}):
-        name = doc.get("name")
-        doc.pop("_id", None)
-        doc.pop("name", None)
-        doc.pop("user_id", None)
+        name = doc["name"]
+        doc.pop("_id")
+        doc.pop("name")
+        doc.pop("user_id")
         profiles[name] = doc
     return profiles
 
@@ -60,9 +57,9 @@ def get_person(user_id, name):
         "name": name
     })
     if doc:
-        doc.pop("_id", None)
-        doc.pop("name", None)
-        doc.pop("user_id", None)
+        doc.pop("_id")
+        doc.pop("name")
+        doc.pop("user_id")
         return doc
     return None
 
@@ -105,6 +102,7 @@ def update_person(user_id, name, field, new_value):
 def save_chat(user_id, name, user_input, generated_options,
               chosen_option=None, they_said="",
               phase="main_purpose", you_tone="", they_tone=""):
+    from datetime import datetime
     entry = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "phase": phase,
@@ -123,7 +121,6 @@ def save_chat(user_id, name, user_input, generated_options,
         "user_id": str(user_id),
         "name": name
     })
-    
     if doc and len(doc.get("chat_history", [])) > 20:
         _auto_summarize(user_id, name, doc)
 
@@ -137,8 +134,8 @@ def _auto_summarize(user_id, name, doc):
     lines = []
     for e in to_summarize:
         lines.append(
-            f"[{e.get('timestamp', 'unknown')}] You: '{e.get('you_said', '')}' | "
-            f"They: '{e.get('they_said', '')}'"
+            f"[{e['timestamp']}] You: '{e['you_said']}' | "
+            f"They: '{e['they_said']}'"
         )
 
     old_summary = doc.get("old_summary", "")
@@ -153,11 +150,11 @@ def _auto_summarize(user_id, name, doc):
     )
 
 def get_memory_summary(user_id, name, last_n=5):
+    from datetime import datetime
     doc = profiles_collection.find_one({
         "user_id": str(user_id),
         "name": name
     })
-    
     if not doc:
         return "No memory found."
 
@@ -173,7 +170,7 @@ def get_memory_summary(user_id, name, last_n=5):
     for entry in history:
         try:
             entry_time = datetime.strptime(
-                entry.get("timestamp", ""), "%Y-%m-%d %H:%M"
+                entry["timestamp"], "%Y-%m-%d %H:%M"
             )
             days_ago = (now - entry_time).days
             if days_ago == 0:
@@ -182,8 +179,7 @@ def get_memory_summary(user_id, name, last_n=5):
                 last_7_days.append(entry)
             else:
                 older.append(entry)
-        except ValueError:
-            # Fallback if timestamp format is wrong or missing
+        except:
             older.append(entry)
 
     memory_lines = []
@@ -195,27 +191,27 @@ def get_memory_summary(user_id, name, last_n=5):
         memory_lines.append("🗂️ Older:")
         for e in older[-3:]:
             memory_lines.append(
-                f"  [{e.get('timestamp', '')}] "
-                f"You: \"{e.get('you_said', '')}\" | "
-                f"They: \"{e.get('they_said', '')}\""
+                f"  [{e['timestamp']}] "
+                f"You: \"{e['you_said']}\" | "
+                f"They: \"{e['they_said']}\""
             )
 
     if last_7_days:
         memory_lines.append("\n📅 Last 7 days:")
         for e in last_7_days[-5:]:
             memory_lines.append(
-                f"  [{e.get('timestamp', '')}]\n"
-                f"  YOU: \"{e.get('you_said', '')}\"\n"
-                f"  THEY: \"{e.get('they_said', '')}\""
+                f"  [{e['timestamp']}]\n"
+                f"  YOU: \"{e['you_said']}\"\n"
+                f"  THEY: \"{e['they_said']}\""
             )
 
     if today:
         memory_lines.append("\n🔥 Today:")
         for e in today:
             memory_lines.append(
-                f"  [{e.get('timestamp', '')}]\n"
-                f"  YOU: \"{e.get('you_said', '')}\"\n"
-                f"  THEY: \"{e.get('they_said', '')}\""
+                f"  [{e['timestamp']}]\n"
+                f"  YOU: \"{e['you_said']}\"\n"
+                f"  THEY: \"{e['they_said']}\""
             )
 
     return "\n".join(memory_lines)
@@ -226,3 +222,89 @@ def clear_memory(user_id, name):
         {"$set": {"chat_history": [], "old_summary": ""}}
     )
     print(f"🗑️ Memory cleared for {name}")
+
+# ── Todo functions ─────────────────────────────────────────
+todos_collection = db["todos"]
+
+def get_todos(user_id, date=None):
+    from datetime import datetime
+    from bson import ObjectId
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+    todos = list(todos_collection.find({
+        "user_id": str(user_id),
+        "date": date
+    }))
+    for t in todos:
+        t["_id"] = str(t["_id"])
+    return todos
+
+def add_todo(user_id, task, person_name="", date=None):
+    from datetime import datetime
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+    todos_collection.insert_one({
+        "user_id": str(user_id),
+        "task": task,
+        "person_name": person_name,
+        "date": date,
+        "completed": False,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+    })
+
+def toggle_todo(todo_id):
+    from bson import ObjectId
+    try:
+        obj_id = ObjectId(todo_id)
+        todo = todos_collection.find_one({"_id": obj_id})
+        if todo:
+            todos_collection.update_one(
+                {"_id": obj_id},
+                {"$set": {"completed": not todo["completed"]}}
+            )
+    except Exception as e:
+        print(f"toggle error: {e}")
+
+def delete_todo(todo_id):
+    from bson import ObjectId
+    try:
+        todos_collection.delete_one({"_id": ObjectId(todo_id)})
+    except Exception as e:
+        print(f"delete error: {e}")
+
+def get_todays_special_people(user_id):
+    from datetime import datetime
+    profiles = load_profiles(user_id)
+    today = datetime.now().strftime("%d %B").lstrip("0")
+    day_part = today.split()[0]
+    month_part = today.split()[1]
+    specials = []
+    for name, data in profiles.items():
+        special = data.get("special_days", "")
+        if not special:
+            continue
+        # split by comma to handle multiple special days
+        events = [e.strip() for e in special.split(",")]
+        for event in events:
+            if day_part in event and month_part.lower() in event.lower():
+                specials.append((name, event))  # each event separately
+    return specials
+
+def get_all_special_days(user_id):
+    from datetime import datetime
+    profiles = load_profiles(user_id)
+    today = datetime.now().strftime("%d %B").lstrip("0")
+    all_days = []
+    for name, data in profiles.items():
+        special = data.get("special_days", "")
+        if not special:
+            continue
+        events = [e.strip() for e in special.split(",")]
+        for event in events:
+            all_days.append({
+                "name": name,
+                "event": event,
+                "relation": data.get("relation", ""),
+            })
+    return all_days
+
